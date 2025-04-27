@@ -51,6 +51,7 @@ class LeggedRobot(BaseTask):
         self.pEe2B = torch.zeros((self.num_envs, 12), device=self.device)
         # self.pre_pEe2H = torch.zeros((self.num_envs, 3), device=self.device)
         self.dis = torch.zeros((self.num_envs, 1), device=self.device).squeeze(-1)
+        self.obs_dis = torch.zeros((self.num_envs, 1), device=self.device)
         self.pre_dis = torch.zeros((self.num_envs, 1), device=self.device).squeeze(-1)
         self.vel = torch.zeros((self.num_envs, 1), device=self.device)
         self.feet_contact = torch.zeros((self.num_envs, 4), device=self.device)
@@ -106,7 +107,26 @@ class LeggedRobot(BaseTask):
         self.base_lin_vel[:] = quat_rotate_inverse(self.base_quat, self.root_states[:, 7:10])
         self.base_ang_vel[:] = quat_rotate_inverse(self.base_quat, self.root_states[:, 10:13])
         self.projected_gravity[:] = quat_rotate_inverse(self.base_quat, self.gravity_vec)
+        # 更新历史状态记录缓冲区
+        self.buffer_base_ang_vel = torch.roll(self.buffer_base_ang_vel, shifts=-1, dims=0)
+        self.buffer_base_ang_vel[-1] = self.base_ang_vel.clone()
 
+        self.buffer_projected_gravity = torch.roll(self.buffer_projected_gravity, shifts=-1, dims=0)
+        self.buffer_projected_gravity[-1] = self.projected_gravity.clone()
+        self.buffer_commands = torch.roll(self.buffer_commands, shifts=-1, dims=0)
+        self.buffer_commands[-1] = self.commands.clone()
+        self.buffer_dof_pos = torch.roll(self.buffer_dof_pos, shifts=-1, dims=0)
+        self.buffer_dof_pos[-1] = self.dof_pos.clone()
+        self.buffer_dof_vel = torch.roll(self.buffer_dof_vel, shifts=-1, dims=0)
+        self.buffer_dof_vel[-1] = self.dof_vel.clone()
+        self.buffer_actions = torch.roll(self.buffer_actions, shifts=-1, dims=0)
+        self.buffer_actions[-1] = self.actions.clone()
+        self.buffer_rpy = torch.roll(self.buffer_rpy, shifts=-1, dims=0)
+        self.buffer_rpy[-1] = self.rpy.clone()
+        self.buffer_pEe2B = torch.roll(self.buffer_pEe2B, shifts=-1, dims=0)
+        self.buffer_pEe2B[-1] = self.pEe2B.clone()
+        self.buffer_dis =  torch.roll(self.buffer_dis, shifts=-1, dims=0)
+        self.buffer_dis[-1] = self.dis.unsqueeze(-1).clone()
         self._post_physics_step_callback()
 
         # compute observations, rewards, resets, ...
@@ -192,15 +212,15 @@ class LeggedRobot(BaseTask):
         """ Computes observations
         """
         pEe2H = self.calc_pe_e2h()
-        print("pEe2H:",self.pEe2H)
-        print("pEe2B",self.pEe2B)
-        self.obs_buf = torch.cat((  self.base_lin_vel * self.obs_scales.lin_vel,
-                                    self.base_ang_vel  * self.obs_scales.ang_vel,
+        self.obs_buf = torch.cat((  self.base_ang_vel  * self.obs_scales.ang_vel,
                                     self.projected_gravity,
                                     self.commands[:, :7] * self.commands_scale,
                                     (self.dof_pos - self.default_dof_pos) * self.obs_scales.dof_pos,
                                     self.dof_vel * self.obs_scales.dof_vel,
-                                    self.actions
+                                    self.actions,
+                                    self.rpy,
+                                    self.pEe2B,
+                                    self.dis.unsqueeze(-1)
                                     ),dim=-1)
         if self.add_noise:
             self.obs_buf += (2 * torch.rand_like(self.obs_buf) - 1) * self.noise_scale_vec
@@ -305,7 +325,9 @@ class LeggedRobot(BaseTask):
         Args:
             env_ids (List[int]): Environments ids for which new commands are needed
         """
+        # self.commands[:, 4] = torch.rand(1024)
         self.commands[env_ids, 4] = torch_rand_float(0.05, 0.33, (len(env_ids), 1), device=self.device).squeeze(1)
+        # self.commands[env_ids, 4] = self.dis
         self.commands[env_ids, 5] = torch_rand_float(0.08, 0.09, (len(env_ids), 1), device=self.device).squeeze(1)
         self.commands[env_ids, 6] = torch_rand_float(-0.4, -0.1, (len(env_ids), 1), device=self.device).squeeze(1)
         self.commands[env_ids, 0] = torch_rand_float(self.command_ranges["lin_vel_x"][0], self.command_ranges["lin_vel_x"][1], (len(env_ids), 1), device=self.device).squeeze(1)
@@ -344,6 +366,14 @@ class LeggedRobot(BaseTask):
             self.pEe2B[..., 3 * i] = self.pEe2H[..., 3 * i] + 0.1934
             self.pEe2B[..., 3 * i + 1] = self.pEe2H[..., 3 * i + 1] - 0.0465
             self.pEe2B[..., 3 * i + 2] = self.pEe2H[..., 3 * i + 2]
+
+        position_x_error = torch.square(self.commands[:, 4] - self.pEe2H[:, 0])
+        position_y_error = torch.square(self.commands[:, 5] - self.pEe2H[:, 1])
+        position_z_error = torch.square(self.commands[:, 6] - self.pEe2H[:, 2])
+        self.dis = position_x_error + position_y_error + position_z_error
+        self.vel = self.dis - self.pre_dis
+        self.pre_dis = self.dis
+
         return self.pEe2H
     
         
@@ -453,13 +483,13 @@ class LeggedRobot(BaseTask):
         self.add_noise = self.cfg.noise.add_noise
         noise_scales = self.cfg.noise.noise_scales
         noise_level = self.cfg.noise.noise_level
-        noise_vec[:3] = noise_scales.lin_vel * noise_level * self.obs_scales.lin_vel
-        noise_vec[3:6] = noise_scales.ang_vel * noise_level * self.obs_scales.ang_vel
-        noise_vec[6:9] = noise_scales.gravity * noise_level
-        noise_vec[9:16] = 0. # commands
-        noise_vec[16:16+self.num_actions] = noise_scales.dof_pos * noise_level * self.obs_scales.dof_pos
-        noise_vec[16+self.num_actions:16+2*self.num_actions] = noise_scales.dof_vel * noise_level * self.obs_scales.dof_vel
-        noise_vec[16+2*self.num_actions:16+3*self.num_actions] = 0. # previous actions
+        noise_vec[:3] = noise_scales.ang_vel * noise_level * self.obs_scales.ang_vel
+        noise_vec[3:6] = noise_scales.gravity * noise_level
+        noise_vec[6:13] = 0. # commands
+        noise_vec[13:13+self.num_actions] = noise_scales.dof_pos * noise_level * self.obs_scales.dof_pos
+        noise_vec[13+self.num_actions:13+2*self.num_actions] = noise_scales.dof_vel * noise_level * self.obs_scales.dof_vel
+        noise_vec[13+2*self.num_actions:13+3*self.num_actions] = 0. # previous actions
+        noise_vec[13+3*self.num_actions:] = 0.
 
         return noise_vec
 
@@ -505,7 +535,20 @@ class LeggedRobot(BaseTask):
         self.base_lin_vel = quat_rotate_inverse(self.base_quat, self.root_states[:, 7:10])
         self.base_ang_vel = quat_rotate_inverse(self.base_quat, self.root_states[:, 10:13])
         self.projected_gravity = quat_rotate_inverse(self.base_quat, self.gravity_vec)
-      
+
+        # 缓存历史状态值
+        self.buffer_base_ang_vel = torch.zeros(self.time_stamp, self.num_envs, 3, dtype=torch.float, device=self.device)
+        self.buffer_projected_gravity = torch.zeros(self.time_stamp, self.num_envs, 3, dtype=torch.float, device=self.device)
+        self.buffer_commands = torch.zeros(self.time_stamp, self.num_envs, 7, dtype=torch.float, device=self.device)
+        self.buffer_dof_pos = torch.zeros(self.time_stamp, self.num_envs, 12, dtype=torch.float, device=self.device)
+        self.buffer_dof_vel = torch.zeros(self.time_stamp, self.num_envs, 12, dtype=torch.float, device=self.device)
+        self.buffer_actions = torch.zeros(self.time_stamp, self.num_envs, 12, dtype=torch.float, device=self.device)
+        self.buffer_rpy = torch.zeros(self.time_stamp, self.num_envs, 3, dtype=torch.float, device=self.device)
+        self.buffer_pEe2B = torch.zeros(self.time_stamp, self.num_envs, 12, dtype=torch.float, device=self.device)
+        self.buffer_dis =  torch.zeros(self.time_stamp, self.num_envs, 1, dtype=torch.float, device=self.device)
+
+
+
 
         # joint positions offsets and PD gains
         self.default_dof_pos = torch.zeros(self.num_dof, dtype=torch.float, device=self.device, requires_grad=False)
@@ -776,7 +819,7 @@ class LeggedRobot(BaseTask):
     def _reward_keep_feet_contact(self):
         contact = self.contact_forces[:, self.feet_indices, 2] > 0.
         self.feet_contact[:, 0] = (~contact[:, 0]).float()  # False→1, True→0
-        contact = self.contact_forces[:, self.feet_indices, 2] > 20.
+        contact = self.contact_forces[:, self.feet_indices, 2] > 15.
         self.feet_contact[:, 1:4] = contact[:, 1:4].float()  # True→1, False→0
         return torch.sum(self.feet_contact, dim=-1)
 
@@ -784,8 +827,7 @@ class LeggedRobot(BaseTask):
         pEe2H = self.calc_pe_e2h()
         # print(pEe2H)
         position_x_error = torch.square(self.commands[:, 4] - self.pEe2H[:, 0])
-        # position_y_error = torch.square(self.commands[:, 5] - self.pEe2H[:, 1])
-        position_y_error = 0
+        position_y_error = torch.square(self.commands[:, 5] - self.pEe2H[:, 1])
         position_z_error = torch.square(self.commands[:, 6] - self.pEe2H[:, 2])
         # print("error:",position_x_error,position_x_error)
         self.dis = position_x_error + position_y_error + position_z_error

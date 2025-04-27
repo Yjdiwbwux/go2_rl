@@ -2,14 +2,15 @@ from .base_config import BaseConfig
 
 class LeggedRobotCfg(BaseConfig):
     class env:
-        num_envs = 1024 # 4096 
-        num_observations = 52 #48
+        num_envs = 4096 # 4096 
+        num_observations = 65 #48
         num_privileged_obs = None # if not None a priviledge_obs_buf will be returned by step() (critic obs for assymetric training). None is returned otherwise 
         num_actions = 12
         env_spacing = 3.  # not used with heightfields/trimeshes 
         send_timeouts = True # send time out information to the algorithm
         episode_length_s = 20 # episode length in seconds
         test = False
+        time_stamp = 20
 
     class terrain:
         mesh_type = 'plane' # "heightfield" # none, plane, heightfield or trimesh
@@ -123,7 +124,7 @@ class LeggedRobotCfg(BaseConfig):
             # probing motions training 
             keep_feet_contact = 0.5
             target_velocity = 2.0
-            target_position = 5.0
+            target_position = 2.0
             lin_vel_z = -2.0
             ang_vel_xy = -0.05
             orientation = -0.2
