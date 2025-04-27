@@ -113,10 +113,18 @@ class LeggedRobot(BaseTask):
 
         self.buffer_projected_gravity = torch.roll(self.buffer_projected_gravity, shifts=-1, dims=0)
         self.buffer_projected_gravity[-1] = self.projected_gravity.clone()
+        self.buffer_projected_gravity[-1] = torch.mul(self.buffer_projected_gravity[-1], self.obs_scales.ang_vel)
+
         self.buffer_commands = torch.roll(self.buffer_commands, shifts=-1, dims=0)
         self.buffer_commands[-1] = self.commands.clone()
+        self.buffer_commands[-1] = torch.mul(self.buffer_commands[-1], self.commands_scale)
+
         self.buffer_dof_pos = torch.roll(self.buffer_dof_pos, shifts=-1, dims=0)
         self.buffer_dof_pos[-1] = self.dof_pos.clone()
+        self.buffer_default_dof_pos = torch.roll(self.buffer_default_dof_pos, shifts=-1, dims=0)
+        self.buffer_default_dof_pos[-1] = self.default_dof_pos.clone()
+        self.buffer_dof_pos[-1] = torch.mul((self.buffer_dof_pos[-1] - self.buffer_default_dof_pos[-1]), self.obs_scales.dof_pos)
+
         self.buffer_dof_vel = torch.roll(self.buffer_dof_vel, shifts=-1, dims=0)
         self.buffer_dof_vel[-1] = self.dof_vel.clone()
         self.buffer_actions = torch.roll(self.buffer_actions, shifts=-1, dims=0)
@@ -127,6 +135,7 @@ class LeggedRobot(BaseTask):
         self.buffer_pEe2B[-1] = self.pEe2B.clone()
         self.buffer_dis =  torch.roll(self.buffer_dis, shifts=-1, dims=0)
         self.buffer_dis[-1] = self.dis.unsqueeze(-1).clone()
+
         self._post_physics_step_callback()
 
         # compute observations, rewards, resets, ...
@@ -212,6 +221,7 @@ class LeggedRobot(BaseTask):
         """ Computes observations
         """
         pEe2H = self.calc_pe_e2h()
+        # obs_scales, commands_scale, default_dof_pos已经在更新状态时考虑
         self.obs_buf = torch.cat((  self.base_ang_vel  * self.obs_scales.ang_vel,
                                     self.projected_gravity,
                                     self.commands[:, :7] * self.commands_scale,
@@ -541,6 +551,7 @@ class LeggedRobot(BaseTask):
         self.buffer_projected_gravity = torch.zeros(self.time_stamp, self.num_envs, 3, dtype=torch.float, device=self.device)
         self.buffer_commands = torch.zeros(self.time_stamp, self.num_envs, 7, dtype=torch.float, device=self.device)
         self.buffer_dof_pos = torch.zeros(self.time_stamp, self.num_envs, 12, dtype=torch.float, device=self.device)
+        self.buffer_default_dof_pos = torch.zeros(self.time_stamp, self.num_envs, 12, dtype=torch.float, device=self.device)
         self.buffer_dof_vel = torch.zeros(self.time_stamp, self.num_envs, 12, dtype=torch.float, device=self.device)
         self.buffer_actions = torch.zeros(self.time_stamp, self.num_envs, 12, dtype=torch.float, device=self.device)
         self.buffer_rpy = torch.zeros(self.time_stamp, self.num_envs, 3, dtype=torch.float, device=self.device)
