@@ -17,6 +17,7 @@ from legged_gym.utils.math import wrap_to_pi
 from legged_gym.utils.isaacgym_utils import get_euler_xyz as get_euler_xyz_in_tensor
 from legged_gym.utils.helpers import class_to_dict
 from .legged_robot_config import LeggedRobotCfg
+from scipy.interpolate import interp1d
 
 class LeggedRobot(BaseTask):
     def __init__(self, cfg: LeggedRobotCfg, sim_params, physics_engine, sim_device, headless):
@@ -56,6 +57,27 @@ class LeggedRobot(BaseTask):
         self.vel = torch.zeros((self.num_envs, 1), device=self.device)
         self.feet_contact = torch.zeros((self.num_envs, 4), device=self.device)
 
+        points = torch.tensor([
+        [0.06, -0.35],  # 起点
+        [0.2, -0.3],    # 中间点
+        [0.25, -0.15],  # 终点
+        [0.2, -0.3],    # 再次经过中间点（返回路径）
+        [0.06, -0.35]])
+        num_intermediate_points = 100  # 每段插值点数
+        total_steps = 1100             # 总步数
+        t_keyframes = torch.linspace(0, 1, len(points))
+        t_interp = torch.linspace(0, 1, num_intermediate_points * (len(points) - 1))
+
+        # 对 x 和 y 分别进行二次插值
+        interp_x = interp1d(t_keyframes.numpy(), points[:, 0].numpy(), kind='quadratic')
+        interp_y = interp1d(t_keyframes.numpy(), points[:, 1].numpy(), kind='quadratic')
+
+        # 生成插值后的完整路径（包含往返）
+        self.full_path = torch.stack([
+            torch.tensor(interp_x(t_interp.numpy())),
+            torch.tensor(interp_y(t_interp.numpy()))
+        ], dim=1)
+
 
     def step(self, actions):
         """ Apply actions, simulate, call self.post_physics_step()
@@ -63,7 +85,6 @@ class LeggedRobot(BaseTask):
         Args:
             actions (torch.Tensor): Tensor of shape (num_envs, num_actions_per_env)
         """
-
         clip_actions = self.cfg.normalization.clip_actions
         self.actions = torch.clip(actions, -clip_actions, clip_actions).to(self.device)
         # step physics and render each frame
@@ -311,20 +332,11 @@ class LeggedRobot(BaseTask):
         Args:
             env_ids (List[int]): Environments ids for which new commands are needed
         """
-        # self.commands[:, 4] = torch.rand(1024)
-        self.commands[env_ids, 4] = torch_rand_float(0.05, 0.33, (len(env_ids), 1), device=self.device).squeeze(1)
-        # self.commands[env_ids, 4] = self.dis
-        self.commands[env_ids, 5] = torch_rand_float(0.08, 0.09, (len(env_ids), 1), device=self.device).squeeze(1)
-        self.commands[env_ids, 6] = torch_rand_float(-0.4, -0.1, (len(env_ids), 1), device=self.device).squeeze(1)
-        self.commands[env_ids, 0] = torch_rand_float(self.command_ranges["lin_vel_x"][0], self.command_ranges["lin_vel_x"][1], (len(env_ids), 1), device=self.device).squeeze(1)
-        self.commands[env_ids, 1] = torch_rand_float(self.command_ranges["lin_vel_y"][0], self.command_ranges["lin_vel_y"][1], (len(env_ids), 1), device=self.device).squeeze(1)
-        if self.cfg.commands.heading_command:
-            self.commands[env_ids, 3] = torch_rand_float(self.command_ranges["heading"][0], self.command_ranges["heading"][1], (len(env_ids), 1), device=self.device).squeeze(1)
-        else:
-            self.commands[env_ids, 2] = torch_rand_float(self.command_ranges["ang_vel_yaw"][0], self.command_ranges["ang_vel_yaw"][1], (len(env_ids), 1), device=self.device).squeeze(1)
-
-        # set small commands to zero
-        self.commands[env_ids, :2] *= (torch.norm(self.commands[env_ids, :2], dim=1) > 0.2).unsqueeze(1)
+        idx = (self.episode_length_buf[env_ids].to('cpu') % len(self.full_path)).long()
+        positions = self.full_path[idx].to(dtype=self.commands.dtype, device=self.commands.device)
+        self.commands[env_ids, 4] = positions[:, 0]
+        self.commands[env_ids, 6] = positions[:, 1]
+        
     
     # 根据单腿的转动角度计算足端到大腿坐标系的变换
     def calc_pe_e2h(self):
@@ -513,6 +525,7 @@ class LeggedRobot(BaseTask):
         self.last_dof_vel = torch.zeros_like(self.dof_vel)
         self.last_root_vel = torch.zeros_like(self.root_states[:, 7:13])
         self.commands = torch.zeros(self.num_envs, self.cfg.commands.num_commands, dtype=torch.float, device=self.device, requires_grad=False) # x vel, y vel, yaw vel, heading
+        self.commands[:, 5] = torch.full((self.num_envs,), 0.08, device=self.device)
         self.commands_scale = torch.tensor([self.obs_scales.lin_vel, self.obs_scales.lin_vel, self.obs_scales.ang_vel, self.obs_scales.ang_vel, self.obs_scales.dof_pos, self.obs_scales.dof_pos, self.obs_scales.dof_pos], device=self.device, requires_grad=False,) # TODO change this
         self.feet_air_time = torch.zeros(self.num_envs, self.feet_indices.shape[0], dtype=torch.float, device=self.device, requires_grad=False)
         self.last_contacts = torch.zeros(self.num_envs, len(self.feet_indices), dtype=torch.bool, device=self.device, requires_grad=False)
@@ -747,7 +760,7 @@ class LeggedRobot(BaseTask):
     def _reward_torque_limits(self):
         # penalize torques too close to the limit
         # print("self.torque_limits*self.cfg.rewards.soft_torque_limit:",self.torque_limits*self.cfg.rewards.soft_torque_limit)
-        return torch.sum((torch.abs(self.torques) - self.torque_limits*self.cfg.rewards.soft_torque_limit*0.7).clip(min=0.), dim=1)
+        return torch.sum((torch.abs(self.torques) - self.torque_limits*self.cfg.rewards.soft_torque_limit*0.8).clip(min=0.), dim=1)
 
     def _reward_tracking_lin_vel(self):
         # Tracking of linear velocity commands (xy axes)
