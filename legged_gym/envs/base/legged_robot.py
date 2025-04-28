@@ -56,6 +56,7 @@ class LeggedRobot(BaseTask):
         self.vel = torch.zeros((self.num_envs, 1), device=self.device)
         self.feet_contact = torch.zeros((self.num_envs, 4), device=self.device)
 
+
     def step(self, actions):
         """ Apply actions, simulate, call self.post_physics_step()
 
@@ -107,26 +108,6 @@ class LeggedRobot(BaseTask):
         self.base_lin_vel[:] = quat_rotate_inverse(self.base_quat, self.root_states[:, 7:10])
         self.base_ang_vel[:] = quat_rotate_inverse(self.base_quat, self.root_states[:, 10:13])
         self.projected_gravity[:] = quat_rotate_inverse(self.base_quat, self.gravity_vec)
-        # 更新历史状态记录缓冲区
-        self.buffer_base_ang_vel = torch.roll(self.buffer_base_ang_vel, shifts=-1, dims=0)
-        self.buffer_base_ang_vel[-1] = self.base_ang_vel.clone()
-
-        self.buffer_projected_gravity = torch.roll(self.buffer_projected_gravity, shifts=-1, dims=0)
-        self.buffer_projected_gravity[-1] = self.projected_gravity.clone()
-        self.buffer_commands = torch.roll(self.buffer_commands, shifts=-1, dims=0)
-        self.buffer_commands[-1] = self.commands.clone()
-        self.buffer_dof_pos = torch.roll(self.buffer_dof_pos, shifts=-1, dims=0)
-        self.buffer_dof_pos[-1] = self.dof_pos.clone()
-        self.buffer_dof_vel = torch.roll(self.buffer_dof_vel, shifts=-1, dims=0)
-        self.buffer_dof_vel[-1] = self.dof_vel.clone()
-        self.buffer_actions = torch.roll(self.buffer_actions, shifts=-1, dims=0)
-        self.buffer_actions[-1] = self.actions.clone()
-        self.buffer_rpy = torch.roll(self.buffer_rpy, shifts=-1, dims=0)
-        self.buffer_rpy[-1] = self.rpy.clone()
-        self.buffer_pEe2B = torch.roll(self.buffer_pEe2B, shifts=-1, dims=0)
-        self.buffer_pEe2B[-1] = self.pEe2B.clone()
-        self.buffer_dis =  torch.roll(self.buffer_dis, shifts=-1, dims=0)
-        self.buffer_dis[-1] = self.dis.unsqueeze(-1).clone()
         self._post_physics_step_callback()
 
         # compute observations, rewards, resets, ...
@@ -212,7 +193,7 @@ class LeggedRobot(BaseTask):
         """ Computes observations
         """
         pEe2H = self.calc_pe_e2h()
-        self.obs_buf = torch.cat((  self.base_ang_vel  * self.obs_scales.ang_vel,
+        obs_buf = torch.cat((  self.base_ang_vel  * self.obs_scales.ang_vel,
                                     self.projected_gravity,
                                     self.commands[:, :7] * self.commands_scale,
                                     (self.dof_pos - self.default_dof_pos) * self.obs_scales.dof_pos,
@@ -222,8 +203,13 @@ class LeggedRobot(BaseTask):
                                     self.pEe2B,
                                     self.dis.unsqueeze(-1)
                                     ),dim=-1)
-        if self.add_noise:
-            self.obs_buf += (2 * torch.rand_like(self.obs_buf) - 1) * self.noise_scale_vec
+        # if self.add_noise:
+        #     obs_buf += (2 * torch.rand_like(obs_buf) - 1) * self.noise_scale_vec
+        
+        self.obs_history_buf = torch.roll(self.obs_history_buf, shifts=-1, dims=1)
+        self.obs_history_buf[:, -1, :] = obs_buf
+        self.obs_buf = self.obs_history_buf.reshape(self.num_envs, -1)
+
 
     def create_sim(self):
         """ Creates simulation, terrain and evironments
@@ -391,8 +377,6 @@ class LeggedRobot(BaseTask):
         #pd controller
         actions_scaled = actions * self.cfg.control.action_scale
         control_type = self.cfg.control.control_type
-        # pEe2H = self.calc_pe_e2h()
-        # print(pEe2H.shape)
         if control_type=="P":
             torques = self.p_gains*(actions_scaled + self.default_dof_pos - self.dof_pos) - self.d_gains*self.dof_vel
         elif control_type=="V":
@@ -402,7 +386,7 @@ class LeggedRobot(BaseTask):
         else:
             raise NameError(f"Unknown controller type: {control_type}")
         return torch.clip(torques, -self.torque_limits, self.torque_limits)
-
+ 
     def _reset_dofs(self, env_ids):
         """ Resets DOF position and velocities of selected environmments
         Positions are randomly selected within 0.5:1.5 x default positions.
@@ -535,20 +519,7 @@ class LeggedRobot(BaseTask):
         self.base_lin_vel = quat_rotate_inverse(self.base_quat, self.root_states[:, 7:10])
         self.base_ang_vel = quat_rotate_inverse(self.base_quat, self.root_states[:, 10:13])
         self.projected_gravity = quat_rotate_inverse(self.base_quat, self.gravity_vec)
-
-        # 缓存历史状态值
-        self.buffer_base_ang_vel = torch.zeros(self.time_stamp, self.num_envs, 3, dtype=torch.float, device=self.device)
-        self.buffer_projected_gravity = torch.zeros(self.time_stamp, self.num_envs, 3, dtype=torch.float, device=self.device)
-        self.buffer_commands = torch.zeros(self.time_stamp, self.num_envs, 7, dtype=torch.float, device=self.device)
-        self.buffer_dof_pos = torch.zeros(self.time_stamp, self.num_envs, 12, dtype=torch.float, device=self.device)
-        self.buffer_dof_vel = torch.zeros(self.time_stamp, self.num_envs, 12, dtype=torch.float, device=self.device)
-        self.buffer_actions = torch.zeros(self.time_stamp, self.num_envs, 12, dtype=torch.float, device=self.device)
-        self.buffer_rpy = torch.zeros(self.time_stamp, self.num_envs, 3, dtype=torch.float, device=self.device)
-        self.buffer_pEe2B = torch.zeros(self.time_stamp, self.num_envs, 12, dtype=torch.float, device=self.device)
-        self.buffer_dis =  torch.zeros(self.time_stamp, self.num_envs, 1, dtype=torch.float, device=self.device)
-
-
-
+        self.obs_history_buf = torch.zeros((self.num_envs, self.time_stamp, 65), device=self.device, dtype=torch.float)
 
         # joint positions offsets and PD gains
         self.default_dof_pos = torch.zeros(self.num_dof, dtype=torch.float, device=self.device, requires_grad=False)
@@ -717,7 +688,6 @@ class LeggedRobot(BaseTask):
 
         self.max_episode_length_s = self.cfg.env.episode_length_s
         self.max_episode_length = np.ceil(self.max_episode_length_s / self.dt)
-        print(self.max_episode_length)
         self.cfg.domain_rand.push_interval = np.ceil(self.cfg.domain_rand.push_interval_s / self.dt)
 
 
