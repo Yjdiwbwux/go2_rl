@@ -12,28 +12,6 @@ import numpy as np
 import torch
 from scipy.interpolate import interp1d
 
-points = torch.tensor([
-    [0.06, -0.35],  # 起点
-    [0.2, -0.3],    # 中间点
-    [0.25, -0.15],  # 终点
-    [0.2, -0.3],    # 再次经过中间点（返回路径）
-    [0.06, -0.35]   # 回到起点
-])
-num_intermediate_points = 100  # 每段插值点数
-total_steps = 1100             # 总步数
-t_keyframes = torch.linspace(0, 1, len(points))
-t_interp = torch.linspace(0, 1, num_intermediate_points * (len(points) - 1))
-
-# 对 x 和 y 分别进行二次插值
-interp_x = interp1d(t_keyframes.numpy(), points[:, 0].numpy(), kind='quadratic')
-interp_y = interp1d(t_keyframes.numpy(), points[:, 1].numpy(), kind='quadratic')
-
-# 生成插值后的完整路径（包含往返）
-full_path = torch.stack([
-    torch.tensor(interp_x(t_interp.numpy())),
-    torch.tensor(interp_y(t_interp.numpy()))
-], dim=1)
-
 def play(args):
     env_cfg, train_cfg = task_registry.get_cfgs(name=args.task)
     # override some parameters for testing
@@ -63,12 +41,6 @@ def play(args):
         print('Exported policy as jit script to: ', path)
     
     for i in range(int(10*int(env.max_episode_length))):
-        # for env_ids in range(env.num_envs):
-        #     idx = env.episode_length_buf[env_ids].to('cpu') % len(full_path)
-        #     position = full_path[idx]
-        #     obs.detach()[env_ids,13] = position[0].item()
-        #     obs.detach()[env_ids,15] = position[1].item()
-        #     print(position)
         actions = policy(obs.detach())      
         obs, _, rews, dones, infos = env.step(actions.detach())
 
