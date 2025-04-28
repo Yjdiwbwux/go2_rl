@@ -2,15 +2,14 @@ from .base_config import BaseConfig
 
 class LeggedRobotCfg(BaseConfig):
     class env:
-        num_envs = 4096 # 4096 
-        num_observations = 65 #48
+        num_envs = 1024 # 4096 
+        num_observations = 1160 #48
         num_privileged_obs = None # if not None a priviledge_obs_buf will be returned by step() (critic obs for assymetric training). None is returned otherwise 
         num_actions = 12
         env_spacing = 3.  # not used with heightfields/trimeshes 
         send_timeouts = True # send time out information to the algorithm
         episode_length_s = 20 # episode length in seconds
         test = False
-        time_stamp = 20
 
     class terrain:
         mesh_type = 'plane' # "heightfield" # none, plane, heightfield or trimesh
@@ -44,7 +43,7 @@ class LeggedRobotCfg(BaseConfig):
         resampling_time = 10. # time before command are changed[s]
         heading_command = False # if true: compute ang vel command from heading error
         class ranges:
-            lin_vel_x = [0.0, 0.0] # min max [m/s]
+            lin_vel_x = [-1.0, 1.0] # min max [m/s]
             lin_vel_y = [0.0, 0.0]   # min max [m/s]
             ang_vel_yaw = [0, 0]    # min max [rad/s]
             heading = [0, 0]
@@ -123,11 +122,11 @@ class LeggedRobotCfg(BaseConfig):
             
             # probing motions training 
             keep_feet_contact = 0.5
-            target_velocity = 2.0
-            target_position = 2.0
+            target_velocity = 0
+            target_position = 0
             lin_vel_z = -2.0
             ang_vel_xy = -0.05
-            orientation = -0.2
+            orientation = -0.5
             base_height = -20.0
             collision = -1.0
             torques = -0.00001
@@ -164,6 +163,8 @@ class LeggedRobotCfg(BaseConfig):
             ang_vel = 0.2
             gravity = 0.05
             height_measurements = 0.1
+            command_target_dist = 0   # 新增：目标点距离噪声
+            feet_pos = 0              # 新增：四脚末端位置噪声
 
     # viewer camera:
     class viewer:
