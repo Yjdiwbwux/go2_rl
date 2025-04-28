@@ -44,6 +44,22 @@ class GO2RoughCfg( LeggedRobotCfg ):
         class scales( LeggedRobotCfg.rewards.scales ):
             # torques = -0.0002 # -0.0002
             dof_pos_limits = -10.0
+            '''
+            termination = -2.0
+            tracking_lin_vel = 1.0
+            tracking_ang_vel = 0.5
+            lin_vel_z = -1.0
+            ang_vel_xy = -0.05
+            orientation = -0.5
+            torques = -0.00002
+            dof_vel = -2.0e-7
+            dof_acc = -1e-07
+            action_rate = -0.01
+            stand_still = -0.5
+            stumble = -1.0
+            feet_air_time = 0.2
+            target_position = 5.0
+            '''
 
 class GO2RoughCfgPPO( LeggedRobotCfgPPO ):
     class algorithm( LeggedRobotCfgPPO.algorithm ):

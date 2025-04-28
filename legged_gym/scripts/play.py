@@ -41,7 +41,7 @@ def play(args):
     
     for i in range(int(10*int(env.max_episode_length))):
         for env_ids in range(env.num_envs):
-            obs.detach()[env_ids,13] = 0.2
+            obs.detach()[env_ids,13] = 0.15
             obs.detach()[env_ids,15] = -0.1
             # obs.detach()[env_ids,15] = -0.3 - 0.2 * (i / int(0.3*int(env.max_episode_length)))
             # print(obs.detach()[env_ids,15])
