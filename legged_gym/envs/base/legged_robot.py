@@ -203,8 +203,8 @@ class LeggedRobot(BaseTask):
                                     self.pEe2B,
                                     self.dis.unsqueeze(-1)
                                     ),dim=-1)
-        # if self.add_noise:
-        #     obs_buf += (2 * torch.rand_like(obs_buf) - 1) * self.noise_scale_vec
+        if self.add_noise:
+            obs_buf += (2 * torch.rand_like(obs_buf) - 1) * self.noise_scale_vec
         
         self.obs_history_buf = torch.roll(self.obs_history_buf, shifts=-1, dims=1)
         self.obs_history_buf[:, -1, :] = obs_buf
@@ -463,7 +463,7 @@ class LeggedRobot(BaseTask):
         Returns:
             [torch.Tensor]: Vector of scales used to multiply a uniform distribution in [-1, 1]
         """
-        noise_vec = torch.zeros_like(self.obs_buf[0])
+        noise_vec = torch.zeros(int(self.num_obs/self.time_stamp), dtype=torch.float32, device="cuda")
         self.add_noise = self.cfg.noise.add_noise
         noise_scales = self.cfg.noise.noise_scales
         noise_level = self.cfg.noise.noise_level
@@ -519,7 +519,7 @@ class LeggedRobot(BaseTask):
         self.base_lin_vel = quat_rotate_inverse(self.base_quat, self.root_states[:, 7:10])
         self.base_ang_vel = quat_rotate_inverse(self.base_quat, self.root_states[:, 10:13])
         self.projected_gravity = quat_rotate_inverse(self.base_quat, self.gravity_vec)
-        self.obs_history_buf = torch.zeros((self.num_envs, self.time_stamp, 65), device=self.device, dtype=torch.float)
+        self.obs_history_buf = torch.zeros((self.num_envs, self.time_stamp, int(self.num_obs/self.time_stamp)), device=self.device, dtype=torch.float)
 
         # joint positions offsets and PD gains
         self.default_dof_pos = torch.zeros(self.num_dof, dtype=torch.float, device=self.device, requires_grad=False)
