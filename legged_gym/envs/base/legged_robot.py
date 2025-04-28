@@ -108,38 +108,6 @@ class LeggedRobot(BaseTask):
         self.base_lin_vel[:] = quat_rotate_inverse(self.base_quat, self.root_states[:, 7:10])
         self.base_ang_vel[:] = quat_rotate_inverse(self.base_quat, self.root_states[:, 10:13])
         self.projected_gravity[:] = quat_rotate_inverse(self.base_quat, self.gravity_vec)
-<<<<<<< HEAD
-=======
-        # 更新历史状态记录缓冲区
-        self.buffer_base_ang_vel = torch.roll(self.buffer_base_ang_vel, shifts=-1, dims=0)
-        self.buffer_base_ang_vel[-1] = self.base_ang_vel.clone()
-
-        self.buffer_projected_gravity = torch.roll(self.buffer_projected_gravity, shifts=-1, dims=0)
-        self.buffer_projected_gravity[-1] = self.projected_gravity.clone()
-        self.buffer_projected_gravity[-1] = torch.mul(self.buffer_projected_gravity[-1], self.obs_scales.ang_vel)
-
-        self.buffer_commands = torch.roll(self.buffer_commands, shifts=-1, dims=0)
-        self.buffer_commands[-1] = self.commands.clone()
-        self.buffer_commands[-1] = torch.mul(self.buffer_commands[-1], self.commands_scale)
-
-        self.buffer_dof_pos = torch.roll(self.buffer_dof_pos, shifts=-1, dims=0)
-        self.buffer_dof_pos[-1] = self.dof_pos.clone()
-        self.buffer_default_dof_pos = torch.roll(self.buffer_default_dof_pos, shifts=-1, dims=0)
-        self.buffer_default_dof_pos[-1] = self.default_dof_pos.clone()
-        self.buffer_dof_pos[-1] = torch.mul((self.buffer_dof_pos[-1] - self.buffer_default_dof_pos[-1]), self.obs_scales.dof_pos)
-
-        self.buffer_dof_vel = torch.roll(self.buffer_dof_vel, shifts=-1, dims=0)
-        self.buffer_dof_vel[-1] = self.dof_vel.clone()
-        self.buffer_actions = torch.roll(self.buffer_actions, shifts=-1, dims=0)
-        self.buffer_actions[-1] = self.actions.clone()
-        self.buffer_rpy = torch.roll(self.buffer_rpy, shifts=-1, dims=0)
-        self.buffer_rpy[-1] = self.rpy.clone()
-        self.buffer_pEe2B = torch.roll(self.buffer_pEe2B, shifts=-1, dims=0)
-        self.buffer_pEe2B[-1] = self.pEe2B.clone()
-        self.buffer_dis =  torch.roll(self.buffer_dis, shifts=-1, dims=0)
-        self.buffer_dis[-1] = self.dis.unsqueeze(-1).clone()
-
->>>>>>> 9b4c498b3a6fcd0f4610422138435b6bb1ccb816
         self._post_physics_step_callback()
 
         # compute observations, rewards, resets, ...
@@ -225,12 +193,7 @@ class LeggedRobot(BaseTask):
         """ Computes observations
         """
         pEe2H = self.calc_pe_e2h()
-<<<<<<< HEAD
         obs_buf = torch.cat((  self.base_ang_vel  * self.obs_scales.ang_vel,
-=======
-        # obs_scales, commands_scale, default_dof_pos已经在更新状态时考虑
-        self.obs_buf = torch.cat((  self.base_ang_vel  * self.obs_scales.ang_vel,
->>>>>>> 9b4c498b3a6fcd0f4610422138435b6bb1ccb816
                                     self.projected_gravity,
                                     self.commands[:, :7] * self.commands_scale,
                                     (self.dof_pos - self.default_dof_pos) * self.obs_scales.dof_pos,
@@ -556,25 +519,7 @@ class LeggedRobot(BaseTask):
         self.base_lin_vel = quat_rotate_inverse(self.base_quat, self.root_states[:, 7:10])
         self.base_ang_vel = quat_rotate_inverse(self.base_quat, self.root_states[:, 10:13])
         self.projected_gravity = quat_rotate_inverse(self.base_quat, self.gravity_vec)
-<<<<<<< HEAD
         self.obs_history_buf = torch.zeros((self.num_envs, self.time_stamp, int(self.num_obs/self.time_stamp)), device=self.device, dtype=torch.float)
-=======
-
-        # 缓存历史状态值
-        self.buffer_base_ang_vel = torch.zeros(self.time_stamp, self.num_envs, 3, dtype=torch.float, device=self.device)
-        self.buffer_projected_gravity = torch.zeros(self.time_stamp, self.num_envs, 3, dtype=torch.float, device=self.device)
-        self.buffer_commands = torch.zeros(self.time_stamp, self.num_envs, 7, dtype=torch.float, device=self.device)
-        self.buffer_dof_pos = torch.zeros(self.time_stamp, self.num_envs, 12, dtype=torch.float, device=self.device)
-        self.buffer_default_dof_pos = torch.zeros(self.time_stamp, self.num_envs, 12, dtype=torch.float, device=self.device)
-        self.buffer_dof_vel = torch.zeros(self.time_stamp, self.num_envs, 12, dtype=torch.float, device=self.device)
-        self.buffer_actions = torch.zeros(self.time_stamp, self.num_envs, 12, dtype=torch.float, device=self.device)
-        self.buffer_rpy = torch.zeros(self.time_stamp, self.num_envs, 3, dtype=torch.float, device=self.device)
-        self.buffer_pEe2B = torch.zeros(self.time_stamp, self.num_envs, 12, dtype=torch.float, device=self.device)
-        self.buffer_dis =  torch.zeros(self.time_stamp, self.num_envs, 1, dtype=torch.float, device=self.device)
-
-
-
->>>>>>> 9b4c498b3a6fcd0f4610422138435b6bb1ccb816
 
         # joint positions offsets and PD gains
         self.default_dof_pos = torch.zeros(self.num_dof, dtype=torch.float, device=self.device, requires_grad=False)
