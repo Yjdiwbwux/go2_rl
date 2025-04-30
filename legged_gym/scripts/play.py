@@ -15,7 +15,7 @@ from scipy.interpolate import interp1d
 def play(args):
     env_cfg, train_cfg = task_registry.get_cfgs(name=args.task)
     # override some parameters for testing
-    env_cfg.env.num_envs = min(env_cfg.env.num_envs, 20)
+    env_cfg.env.num_envs = min(env_cfg.env.num_envs, 1)
     env_cfg.terrain.num_rows = 5
     env_cfg.terrain.num_cols = 5
     env_cfg.terrain.curriculum = False
@@ -40,8 +40,9 @@ def play(args):
         export_policy_as_jit(ppo_runner.alg.actor_critic, path)
         print('Exported policy as jit script to: ', path)
     
-    for i in range(int(10*int(env.max_episode_length))):
+    for i in range(int(100*int(env.max_episode_length))):
         actions = policy(obs.detach())      
+        print(env.pEe2B[0, :])
         obs, _, rews, dones, infos = env.step(actions.detach())
 
 if __name__ == '__main__':

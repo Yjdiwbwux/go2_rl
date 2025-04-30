@@ -58,11 +58,11 @@ class LeggedRobot(BaseTask):
         self.feet_contact = torch.zeros((self.num_envs, 4), device=self.device)
 
         points = torch.tensor([
-        [0.06, -0.35],  # 起点
-        [0.2, -0.3],    # 中间点
+        [0.1, -0.25],  # 起点
+        [0.2, -0.2],    # 中间点
         [0.25, -0.15],  # 终点
-        [0.2, -0.3],    # 再次经过中间点（返回路径）
-        [0.06, -0.35]])
+        [0.2, -0.2],    
+        [0.1, -0.25]])
         num_intermediate_points = 100  # 每段插值点数
         total_steps = 1100             # 总步数
         t_keyframes = torch.linspace(0, 1, len(points))
@@ -340,10 +340,31 @@ class LeggedRobot(BaseTask):
     
     # 根据单腿的转动角度计算足端到大腿坐标系的变换
     def calc_pe_e2h(self):
-        l1 = 1 * 0.0885
         l2 = -0.213
         l3 = -0.213
-        for i in range(4):
+        
+        for i in [0,2]:
+            l1 = 1 * 0.0885
+            
+            q = self.dof_pos[:, :]
+
+            s1 = torch.sin(q[..., 3 * i])
+            s2 = torch.sin(q[..., 3 * i + 1])
+            s3 = torch.sin(q[..., 3 * i + 2])
+
+            c1 = torch.cos(q[..., 3 * i])
+            c2 = torch.cos(q[..., 3 * i + 1])
+            c3 = torch.cos(q[..., 3 * i + 2])
+
+            c23 = c2 * c3 - s2 * s3
+            s23 = s2 * c3 + c2 * s3
+
+            self.pEe2H[..., 3 * i] = l3 * s23 + l2 * s2
+            self.pEe2H[..., 3 * i + 1] = -l3 * s1 * c23 + l1 * c1 - l2 * c2 * s1
+            self.pEe2H[..., 3 * i + 2] = l3 * c1 * c23 + l1 * s1 + l2 * c1 * c2
+        
+        for i in [1,3]:
+            l1 = -1 * 0.0885
             q = self.dof_pos[:, :]
 
             s1 = torch.sin(q[..., 3 * i])
@@ -361,9 +382,18 @@ class LeggedRobot(BaseTask):
             self.pEe2H[..., 3 * i + 1] = -l3 * s1 * c23 + l1 * c1 - l2 * c2 * s1
             self.pEe2H[..., 3 * i + 2] = l3 * c1 * c23 + l1 * s1 + l2 * c1 * c2
 
-            self.pEe2B[..., 3 * i] = self.pEe2H[..., 3 * i] + 0.1934
-            self.pEe2B[..., 3 * i + 1] = self.pEe2H[..., 3 * i + 1] - 0.0465
-            self.pEe2B[..., 3 * i + 2] = self.pEe2H[..., 3 * i + 2]
+        self.pEe2B[..., 0] = self.pEe2H[..., 0] + 0.1934
+        self.pEe2B[..., 1] = self.pEe2H[..., 1] + 0.0465
+        self.pEe2B[..., 2] = self.pEe2H[..., 2]
+        self.pEe2B[..., 3] = self.pEe2H[..., 3] + 0.1934
+        self.pEe2B[..., 4] = self.pEe2H[..., 4] - 0.0465
+        self.pEe2B[..., 5] = self.pEe2H[..., 5]
+        self.pEe2B[..., 6] = self.pEe2H[..., 6] - 0.1934
+        self.pEe2B[..., 7] = self.pEe2H[..., 7] + 0.0465
+        self.pEe2B[..., 8] = self.pEe2H[..., 8]
+        self.pEe2B[..., 9] = self.pEe2H[..., 9] - 0.1934
+        self.pEe2B[..., 10] = self.pEe2H[..., 10] - 0.0465 
+        self.pEe2B[..., 11] = self.pEe2H[..., 11]
 
         position_x_error = torch.square(self.commands[:, 4] - self.pEe2H[:, 0])
         position_y_error = torch.square(self.commands[:, 5] - self.pEe2H[:, 1])
@@ -374,6 +404,44 @@ class LeggedRobot(BaseTask):
 
         return self.pEe2H
     
+
+    import torch
+
+    def calc_jaco(q, abad_link_length, hip_link_length, knee_link_length, side_sign):
+        abad_link_length = 0.088508
+        hip_link_length = 0.213
+        knee_link_length = 0.213
+
+        l1 = abad_link_length * side_sign
+        l2 = -hip_link_length
+        l3 = -knee_link_length
+    
+        s1 = torch.sin(q[0])
+        s2 = torch.sin(q[1])
+        s3 = torch.sin(q[2])
+    
+        c1 = torch.cos(q[0])
+        c2 = torch.cos(q[1])
+        c3 = torch.cos(q[2])
+    
+        c23 = c2 * c3 - s2 * s3
+        s23 = s2 * c3 + c2 * s3
+    
+        jaco = torch.zeros(3, 3, device=q.device)
+
+        jaco[0, 0] = 0
+        jaco[1, 0] = -l3 * c1 * c23 - l2 * c1 * c2 - l1 * s1
+        jaco[2, 0] = -l3 * s1 * c23 - l2 * c2 * s1 + l1 * c1
+    
+        jaco[0, 1] = l3 * c23 + l2 * c2
+        jaco[1, 1] = l3 * s1 * s23 + l2 * s1 * s2
+        jaco[2, 1] = -l3 * c1 * s23 - l2 * c1 * s2
+    
+        jaco[0, 2] = l3 * c23
+        jaco[1, 2] = l3 * s1 * s23
+        jaco[2, 2] = -l3 * c1 * s23
+    
+        return jaco
         
     def _compute_torques(self, actions):
         """ Compute torques from actions.
@@ -525,7 +593,7 @@ class LeggedRobot(BaseTask):
         self.last_dof_vel = torch.zeros_like(self.dof_vel)
         self.last_root_vel = torch.zeros_like(self.root_states[:, 7:13])
         self.commands = torch.zeros(self.num_envs, self.cfg.commands.num_commands, dtype=torch.float, device=self.device, requires_grad=False) # x vel, y vel, yaw vel, heading
-        self.commands[:, 5] = torch.full((self.num_envs,), 0.08, device=self.device)
+        self.commands[:, 5] = torch.full((self.num_envs,), 0.184, device=self.device)
         self.commands_scale = torch.tensor([self.obs_scales.lin_vel, self.obs_scales.lin_vel, self.obs_scales.ang_vel, self.obs_scales.ang_vel, self.obs_scales.dof_pos, self.obs_scales.dof_pos, self.obs_scales.dof_pos], device=self.device, requires_grad=False,) # TODO change this
         self.feet_air_time = torch.zeros(self.num_envs, self.feet_indices.shape[0], dtype=torch.float, device=self.device, requires_grad=False)
         self.last_contacts = torch.zeros(self.num_envs, len(self.feet_indices), dtype=torch.bool, device=self.device, requires_grad=False)
@@ -802,7 +870,7 @@ class LeggedRobot(BaseTask):
     def _reward_keep_feet_contact(self):
         contact = self.contact_forces[:, self.feet_indices, 2] > 0.
         self.feet_contact[:, 0] = (~contact[:, 0]).float()  # False→1, True→0
-        contact = self.contact_forces[:, self.feet_indices, 2] > 15.
+        contact = self.contact_forces[:, self.feet_indices, 2] > 20.
         self.feet_contact[:, 1:4] = contact[:, 1:4].float()  # True→1, False→0
         return torch.sum(self.feet_contact, dim=-1)
 
