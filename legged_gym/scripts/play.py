@@ -28,7 +28,7 @@ def play(args):
     # prepare environment
     env, _ = task_registry.make_env(name=args.task, args=args, env_cfg=env_cfg)
     obs = env.get_observations()
-    print(obs.shape)
+
     # load policy
     train_cfg.runner.resume = True
     ppo_runner, train_cfg = task_registry.make_alg_runner(env=env, name=args.task, args=args, train_cfg=train_cfg)
@@ -42,7 +42,8 @@ def play(args):
     
     for i in range(int(100*int(env.max_episode_length))):
         actions = policy(obs.detach())      
-        print(env.pEe2B[0, :])
+        env.pEe2B[0, :]
+        env._reward_dis_feet_contact()
         obs, _, rews, dones, infos = env.step(actions.detach())
 
 if __name__ == '__main__':

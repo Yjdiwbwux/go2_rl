@@ -122,7 +122,7 @@ class LeggedRobotCfg(BaseConfig):
             # stand_still = -0.1 #-0.
             
             # probing motions training 
-            keep_feet_contact = 0.5
+            keep_feet_contact = 0.1
             target_velocity = 2.0
             target_position = 2.0
             lin_vel_z = -2.0
@@ -135,6 +135,7 @@ class LeggedRobotCfg(BaseConfig):
             action_rate = -0.01
             dof_vel = -0.0001
             torque_limits = -1.0
+            dis_feet_contact = -0.1
 
         only_positive_rewards = True # if true negative total rewards are clipped at zero (avoids early termination problems)
         tracking_sigma = 0.25 # tracking reward = exp(-error^2/sigma)

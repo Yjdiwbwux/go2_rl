@@ -593,7 +593,7 @@ class LeggedRobot(BaseTask):
         self.last_dof_vel = torch.zeros_like(self.dof_vel)
         self.last_root_vel = torch.zeros_like(self.root_states[:, 7:13])
         self.commands = torch.zeros(self.num_envs, self.cfg.commands.num_commands, dtype=torch.float, device=self.device, requires_grad=False) # x vel, y vel, yaw vel, heading
-        self.commands[:, 5] = torch.full((self.num_envs,), 0.184, device=self.device)
+        self.commands[:, 5] = torch.full((self.num_envs,), 0.08, device=self.device)
         self.commands_scale = torch.tensor([self.obs_scales.lin_vel, self.obs_scales.lin_vel, self.obs_scales.ang_vel, self.obs_scales.ang_vel, self.obs_scales.dof_pos, self.obs_scales.dof_pos, self.obs_scales.dof_pos], device=self.device, requires_grad=False,) # TODO change this
         self.feet_air_time = torch.zeros(self.num_envs, self.feet_indices.shape[0], dtype=torch.float, device=self.device, requires_grad=False)
         self.last_contacts = torch.zeros(self.num_envs, len(self.feet_indices), dtype=torch.bool, device=self.device, requires_grad=False)
@@ -601,7 +601,7 @@ class LeggedRobot(BaseTask):
         self.base_ang_vel = quat_rotate_inverse(self.base_quat, self.root_states[:, 10:13])
         self.projected_gravity = quat_rotate_inverse(self.base_quat, self.gravity_vec)
         self.obs_history_buf = torch.zeros((self.num_envs, self.time_stamp, int(self.num_obs/self.time_stamp)), device=self.device, dtype=torch.float)
-
+        self.dis_pEe2B = torch.zeros(self.num_envs, 4, dtype=torch.float, device=self.device, requires_grad=False)
         # joint positions offsets and PD gains
         self.default_dof_pos = torch.zeros(self.num_dof, dtype=torch.float, device=self.device, requires_grad=False)
         for i in range(self.num_dofs):
@@ -870,7 +870,7 @@ class LeggedRobot(BaseTask):
     def _reward_keep_feet_contact(self):
         contact = self.contact_forces[:, self.feet_indices, 2] > 0.
         self.feet_contact[:, 0] = (~contact[:, 0]).float()  # False→1, True→0
-        contact = self.contact_forces[:, self.feet_indices, 2] > 20.
+        contact = self.contact_forces[:, self.feet_indices, 2] > 15.
         self.feet_contact[:, 1:4] = contact[:, 1:4].float()  # True→1, False→0
         return torch.sum(self.feet_contact, dim=-1)
 
@@ -890,3 +890,15 @@ class LeggedRobot(BaseTask):
         # return self.dis
         # print("dis:",torch.exp(-4*self.dis))
         return torch.exp(-4*self.dis)
+    
+    def _reward_dis_feet_contact(self):
+        # 计算机器人落脚点到中性落脚点的二维距离
+        feetPosNormalStand_FL = torch.tensor([[0.1881, 0.16]], dtype=torch.float, device=self.device, requires_grad=False)
+        feetPosNormalStand_FR = torch.tensor([[0.1881, -0.16]], dtype=torch.float, device=self.device, requires_grad=False)
+        feetPosNormalStand_RL = torch.tensor([[-0.1881, 0.16]], dtype=torch.float, device=self.device, requires_grad=False)
+        feetPosNormalStand_RR = torch.tensor([[-0.1881, -0.16]], dtype=torch.float, device=self.device, requires_grad=False)
+        self.dis_pEe2B[...,1] = torch.norm(self.pEe2B[...,2:4] - feetPosNormalStand_FR, p=2, dim=1)
+        self.dis_pEe2B[...,2] = torch.norm(self.pEe2B[...,4:6] - feetPosNormalStand_RL, p=2, dim=1)
+        self.dis_pEe2B[...,3] = torch.norm(self.pEe2B[...,6:8] - feetPosNormalStand_RR, p=2, dim=1)
+        dis_p2n = torch.sum(self.dis_pEe2B, dim=1)                   
+        return dis_p2n
