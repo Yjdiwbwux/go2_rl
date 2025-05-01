@@ -58,20 +58,21 @@ class LeggedRobot(BaseTask):
         self.feet_contact = torch.zeros((self.num_envs, 4), device=self.device)
 
         points = torch.tensor([
-            [0.0, 0.15], 
-            [0.0, 0.3], 
-            [0.0, 0.15]  
-            ])
-
-        num_intermediate_points = 200 
-        total_steps = 1000           
-
+        [0.1, -0.25],  # 起点
+        [0.2, -0.2],    # 中间点
+        [0.25, -0.15],  # 终点
+        [0.2, -0.2],    
+        [0.1, -0.25]])
+        num_intermediate_points = 100  # 每段插值点数
+        total_steps = 1100             # 总步数
         t_keyframes = torch.linspace(0, 1, len(points))
         t_interp = torch.linspace(0, 1, num_intermediate_points * (len(points) - 1))
 
-        interp_x = interp1d(t_keyframes.numpy(), points[:, 0].numpy(), kind='linear')
-        interp_y = interp1d(t_keyframes.numpy(), points[:, 1].numpy(), kind='linear')
+        # 对 x 和 y 分别进行二次插值
+        interp_x = interp1d(t_keyframes.numpy(), points[:, 0].numpy(), kind='quadratic')
+        interp_y = interp1d(t_keyframes.numpy(), points[:, 1].numpy(), kind='quadratic')
 
+        # 生成插值后的完整路径（包含往返）
         self.full_path = torch.stack([
             torch.tensor(interp_x(t_interp.numpy())),
             torch.tensor(interp_y(t_interp.numpy()))
@@ -215,12 +216,13 @@ class LeggedRobot(BaseTask):
         pEe2H = self.calc_pe_e2h()
         obs_buf = torch.cat((  self.base_ang_vel  * self.obs_scales.ang_vel,
                                     self.projected_gravity,
-                                    self.commands[:, :] * self.commands_scale,
+                                    self.commands[:, :7] * self.commands_scale,
                                     (self.dof_pos - self.default_dof_pos) * self.obs_scales.dof_pos,
                                     self.dof_vel * self.obs_scales.dof_vel,
                                     self.actions,
                                     self.rpy,
-                                    self.pEe2B
+                                    self.pEe2B,
+                                    self.dis.unsqueeze(-1)
                                     ),dim=-1)
         if self.add_noise:
             obs_buf += (2 * torch.rand_like(obs_buf) - 1) * self.noise_scale_vec
@@ -319,7 +321,10 @@ class LeggedRobot(BaseTask):
         # 
         env_ids = (self.episode_length_buf % int(self.cfg.commands.resampling_time / self.dt)==0).nonzero(as_tuple=False).flatten()
         self._resample_commands(env_ids)
-       
+        if self.cfg.commands.heading_command:
+            forward = quat_apply(self.base_quat, self.forward_vec)
+            heading = torch.atan2(forward[:, 1], forward[:, 0])
+            self.commands[:, 2] = torch.clip(0.5*wrap_to_pi(self.commands[:, 3] - heading), -1., 1.)
 
     def _resample_commands(self, env_ids):
         """ Randommly select commands of some environments
@@ -328,8 +333,9 @@ class LeggedRobot(BaseTask):
             env_ids (List[int]): Environments ids for which new commands are needed
         """
         idx = (self.episode_length_buf[env_ids].to('cpu') % len(self.full_path)).long()
-        positions = self.full_path[idx].to(dtype=torch.float, device=self.device)
-        self.commands[env_ids, 0] = positions[:, 1]
+        positions = self.full_path[idx].to(dtype=self.commands.dtype, device=self.commands.device)
+        self.commands[env_ids, 4] = positions[:, 0]
+        self.commands[env_ids, 6] = positions[:, 1]
         
     
     # 根据单腿的转动角度计算足端到大腿坐标系的变换
@@ -388,6 +394,14 @@ class LeggedRobot(BaseTask):
         self.pEe2B[..., 9] = self.pEe2H[..., 9] - 0.1934
         self.pEe2B[..., 10] = self.pEe2H[..., 10] - 0.0465 
         self.pEe2B[..., 11] = self.pEe2H[..., 11]
+
+        position_x_error = torch.square(self.commands[:, 4] - self.pEe2H[:, 0])
+        position_y_error = torch.square(self.commands[:, 5] - self.pEe2H[:, 1])
+        position_z_error = torch.square(self.commands[:, 6] - self.pEe2H[:, 2])
+        self.dis = position_x_error + position_y_error + position_z_error
+        self.vel = self.dis - self.pre_dis
+        self.pre_dis = self.dis
+
         return self.pEe2H
     
 
@@ -535,11 +549,11 @@ class LeggedRobot(BaseTask):
         noise_level = self.cfg.noise.noise_level
         noise_vec[:3] = noise_scales.ang_vel * noise_level * self.obs_scales.ang_vel
         noise_vec[3:6] = noise_scales.gravity * noise_level
-        noise_vec[6:7] = 0. # commands
-        noise_vec[7:7+self.num_actions] = noise_scales.dof_pos * noise_level * self.obs_scales.dof_pos
-        noise_vec[7+self.num_actions:7+2*self.num_actions] = noise_scales.dof_vel * noise_level * self.obs_scales.dof_vel
-        noise_vec[7+2*self.num_actions:7+3*self.num_actions] = 0. # previous actions
-        noise_vec[7+3*self.num_actions:] = 0.
+        noise_vec[6:13] = 0. # commands
+        noise_vec[13:13+self.num_actions] = noise_scales.dof_pos * noise_level * self.obs_scales.dof_pos
+        noise_vec[13+self.num_actions:13+2*self.num_actions] = noise_scales.dof_vel * noise_level * self.obs_scales.dof_vel
+        noise_vec[13+2*self.num_actions:13+3*self.num_actions] = 0. # previous actions
+        noise_vec[13+3*self.num_actions:] = 0.
 
         return noise_vec
 
@@ -579,7 +593,8 @@ class LeggedRobot(BaseTask):
         self.last_dof_vel = torch.zeros_like(self.dof_vel)
         self.last_root_vel = torch.zeros_like(self.root_states[:, 7:13])
         self.commands = torch.zeros(self.num_envs, self.cfg.commands.num_commands, dtype=torch.float, device=self.device, requires_grad=False) # x vel, y vel, yaw vel, heading
-        self.commands_scale = torch.tensor([self.obs_scales.lin_vel], device=self.device, requires_grad=False,) # TODO change this
+        self.commands[:, 5] = torch.full((self.num_envs,), 0.08, device=self.device)
+        self.commands_scale = torch.tensor([self.obs_scales.lin_vel, self.obs_scales.lin_vel, self.obs_scales.ang_vel, self.obs_scales.ang_vel, self.obs_scales.dof_pos, self.obs_scales.dof_pos, self.obs_scales.dof_pos], device=self.device, requires_grad=False,) # TODO change this
         self.feet_air_time = torch.zeros(self.num_envs, self.feet_indices.shape[0], dtype=torch.float, device=self.device, requires_grad=False)
         self.last_contacts = torch.zeros(self.num_envs, len(self.feet_indices), dtype=torch.bool, device=self.device, requires_grad=False)
         self.base_lin_vel = quat_rotate_inverse(self.base_quat, self.root_states[:, 7:10])
@@ -773,10 +788,7 @@ class LeggedRobot(BaseTask):
     def _reward_base_height(self):
         # Penalize base height away from target
         base_height = self.root_states[:, 2]
-        is_within_threshold = torch.abs(base_height - self.commands[:, 0]) < 0.02
-        track_height = is_within_threshold.float()  # True -> 1.0, False -> 0.0
-        return torch.square(track_height)
-    
+        return torch.square(base_height - self.cfg.rewards.base_height_target)
     
     def _reward_torques(self):
         # Penalize torques
@@ -817,47 +829,76 @@ class LeggedRobot(BaseTask):
         # penalize torques too close to the limit
         # print("self.torque_limits*self.cfg.rewards.soft_torque_limit:",self.torque_limits*self.cfg.rewards.soft_torque_limit)
         return torch.sum((torch.abs(self.torques) - self.torque_limits*self.cfg.rewards.soft_torque_limit*0.8).clip(min=0.), dim=1)
+
+    def _reward_tracking_lin_vel(self):
+        # Tracking of linear velocity commands (xy axes)
+        lin_vel_error = torch.sum(torch.square(self.commands[:, :2] - self.base_lin_vel[:, :2]), dim=1)
+        return torch.exp(-lin_vel_error/self.cfg.rewards.tracking_sigma)
+    
+    def _reward_tracking_ang_vel(self):
+        # Tracking of angular velocity commands (yaw) 
+        ang_vel_error = torch.square(self.commands[:, 2] - self.base_ang_vel[:, 2])
+        return torch.exp(-ang_vel_error/self.cfg.rewards.tracking_sigma)
+
+    def _reward_feet_air_time(self):
+        # Reward long steps
+        # Need to filter the contacts because the contact reporting of PhysX is unreliable on meshes
+        contact = self.contact_forces[:, self.feet_indices, 2] > 1.
+        # print("contact:",contact[0,:])
+        contact_filt = torch.logical_or(contact, self.last_contacts) 
+        self.last_contacts = contact
+        first_contact = (self.feet_air_time > 0.) * contact_filt
+        self.feet_air_time += self.dt
+        rew_airTime = torch.sum((self.feet_air_time - 0.5) * first_contact, dim=1) # reward only on first contact with the ground
+        rew_airTime *= torch.norm(self.commands[:, :2], dim=1) > 0.1 #no reward for zero command
+        self.feet_air_time *= ~contact_filt
+        return rew_airTime
     
     def _reward_stumble(self):
         # Penalize feet hitting vertical surfaces
         return torch.any(torch.norm(self.contact_forces[:, self.feet_indices, :2], dim=2) >\
              5 *torch.abs(self.contact_forces[:, self.feet_indices, 2]), dim=1)
+        
+    def _reward_stand_still(self):
+        # Penalize motion at zero commands
+        return torch.sum(torch.abs(self.dof_pos - self.default_dof_pos), dim=1) * (torch.norm(self.commands[:, :2], dim=1) < 0.1)
 
     def _reward_feet_contact_forces(self):
         # penalize high contact forces
         return torch.sum((torch.norm(self.contact_forces[:, self.feet_indices, :], dim=-1) -  self.cfg.rewards.max_contact_force).clip(min=0.), dim=1)
     
     def _reward_keep_feet_contact(self):
+        contact = self.contact_forces[:, self.feet_indices, 2] > 0.
+        self.feet_contact[:, 0] = (~contact[:, 0]).float()  # False→1, True→0
         contact = self.contact_forces[:, self.feet_indices, 2] > 15.
-        self.feet_contact[:, :] = contact[:, :].float()  # True→1, False→0
+        self.feet_contact[:, 1:4] = contact[:, 1:4].float()  # True→1, False→0
         return torch.sum(self.feet_contact, dim=-1)
+
+    def _reward_target_velocity(self):
+        pEe2H = self.calc_pe_e2h()
+        # print(pEe2H)
+        position_x_error = torch.square(self.commands[:, 4] - self.pEe2H[:, 0])
+        position_y_error = torch.square(self.commands[:, 5] - self.pEe2H[:, 1])
+        position_z_error = torch.square(self.commands[:, 6] - self.pEe2H[:, 2])
+        # print("error:",position_x_error,position_x_error)
+        self.dis = position_x_error + position_y_error + position_z_error
+        self.vel = self.dis - self.pre_dis
+        self.pre_dis = self.dis
+        return self.vel
+    
+    def _reward_target_position(self):
+        # return self.dis
+        # print("dis:",torch.exp(-4*self.dis))
+        return torch.exp(-4*self.dis)
     
     def _reward_dis_feet_contact(self):
         # 计算机器人落脚点到中性落脚点的二维距离
-        feetPosNormalStand_FL = torch.tensor([[0.12]], dtype=torch.float, device=self.device, requires_grad=False)
-        feetPosNormalStand_FR = torch.tensor([[-0.12]], dtype=torch.float, device=self.device, requires_grad=False)
-        feetPosNormalStand_RL = torch.tensor([[0.12]], dtype=torch.float, device=self.device, requires_grad=False)
-        feetPosNormalStand_RR = torch.tensor([[-0.12]], dtype=torch.float, device=self.device, requires_grad=False)
-        self.dis_pEe2B[...,0] = torch.norm(self.pEe2B[...,1:2] - feetPosNormalStand_FL, p=2, dim=1)
-        self.dis_pEe2B[...,1] = torch.norm(self.pEe2B[...,4:5] - feetPosNormalStand_FR, p=2, dim=1)
-        self.dis_pEe2B[...,2] = torch.norm(self.pEe2B[...,7:8] - feetPosNormalStand_RL, p=2, dim=1)
-        self.dis_pEe2B[...,3] = torch.norm(self.pEe2B[...,10:11] - feetPosNormalStand_RR, p=2, dim=1)
+        feetPosNormalStand_FL = torch.tensor([[0.1881, 0.16]], dtype=torch.float, device=self.device, requires_grad=False)
+        feetPosNormalStand_FR = torch.tensor([[0.1881, -0.16]], dtype=torch.float, device=self.device, requires_grad=False)
+        feetPosNormalStand_RL = torch.tensor([[-0.1881, 0.16]], dtype=torch.float, device=self.device, requires_grad=False)
+        feetPosNormalStand_RR = torch.tensor([[-0.1881, -0.16]], dtype=torch.float, device=self.device, requires_grad=False)
+        self.dis_pEe2B[...,1] = torch.norm(self.pEe2B[...,2:4] - feetPosNormalStand_FR, p=2, dim=1)
+        self.dis_pEe2B[...,2] = torch.norm(self.pEe2B[...,4:6] - feetPosNormalStand_RL, p=2, dim=1)
+        self.dis_pEe2B[...,3] = torch.norm(self.pEe2B[...,6:8] - feetPosNormalStand_RR, p=2, dim=1)
         dis_p2n = torch.sum(self.dis_pEe2B, dim=1)                   
         return dis_p2n
-    # def _reward_dis_feet_contact(self):
-    #     # 计算机器人落脚点到中性落脚点的二维距离
-    #     feetPosNormalStand_FL = torch.tensor([[0.1881, 0.16]], dtype=torch.float, device=self.device, requires_grad=False)
-    #     feetPosNormalStand_FR = torch.tensor([[0.1881, -0.16]], dtype=torch.float, device=self.device, requires_grad=False)
-    #     feetPosNormalStand_RL = torch.tensor([[-0.1881, 0.16]], dtype=torch.float, device=self.device, requires_grad=False)
-    #     feetPosNormalStand_RR = torch.tensor([[-0.1881, -0.16]], dtype=torch.float, device=self.device, requires_grad=False)
-    #     self.dis_pEe2B[...,0] = torch.norm(self.pEe2B[...,0:2] - feetPosNormalStand_FL, p=2, dim=1)
-    #     self.dis_pEe2B[...,1] = torch.norm(self.pEe2B[...,3:5] - feetPosNormalStand_FR, p=2, dim=1)
-    #     self.dis_pEe2B[...,2] = torch.norm(self.pEe2B[...,6:8] - feetPosNormalStand_RL, p=2, dim=1)
-    #     self.dis_pEe2B[...,3] = torch.norm(self.pEe2B[...,9:11] - feetPosNormalStand_RR, p=2, dim=1)
-    #     # print("****************")
-    #     # print(self.pEe2B[...,0:2])
-    #     # print(self.pEe2B[...,3:5])
-    #     # print(self.pEe2B[...,6:8])
-    #     # print(self.pEe2B[...,9:11])
-    #     dis_p2n = torch.sum(self.dis_pEe2B, dim=1)                   
-    #     return dis_p2n
