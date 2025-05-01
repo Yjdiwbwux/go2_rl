@@ -3,7 +3,7 @@ from .base_config import BaseConfig
 class LeggedRobotCfg(BaseConfig):
     class env:
         num_envs = 4096 # 4096 
-        num_observations = 1300 #48
+        num_observations = 1160 #48
         num_privileged_obs = None # if not None a priviledge_obs_buf will be returned by step() (critic obs for assymetric training). None is returned otherwise 
         num_actions = 12
         env_spacing = 3.  # not used with heightfields/trimeshes 
@@ -40,7 +40,7 @@ class LeggedRobotCfg(BaseConfig):
     class commands:
         curriculum = False
         max_curriculum = 1.
-        num_commands = 7 # default: lin_vel_x, lin_vel_y, ang_vel_yaw, heading (in heading mode ang_vel_yaw is recomputed from heading error)
+        num_commands = 1 # default: lin_vel_x, lin_vel_y, ang_vel_yaw, heading (in heading mode ang_vel_yaw is recomputed from heading error)
         resampling_time = 0.1 # time before command are changed[s]
         heading_command = False # if true: compute ang vel command from heading error
         class ranges:
@@ -54,7 +54,7 @@ class LeggedRobotCfg(BaseConfig):
             # heading = [-3.14, 3.14]
 
     class init_state:
-        pos = [0.0, 0.0, 1.] # x,y,z [m]
+        pos = [0.0, 0.0, 1.2] # x,y,z [m]
         rot = [0.0, 0.0, 0.0, 1.0] # x,y,z,w [quat]
         lin_vel = [0.0, 0.0, 0.0]  # x,y,z [m/s]
         ang_vel = [0.0, 0.0, 0.0]  # x,y,z [rad/s]
@@ -65,7 +65,7 @@ class LeggedRobotCfg(BaseConfig):
     class control:
         control_type = 'P' # P: position, V: velocity, T: torques
         # PD Drive parameters:
-        stiffness = {'joint_a': 10.0, 'joint_b': 15.}  # [N*m/rad]
+        stiffness = {'joint_a': 10.0, 'joint_b': 25.}  # [N*m/rad]
         damping = {'joint_a': 1.0, 'joint_b': 1.5}     # [N*m*s/rad]
         # action scale: target angle = actionScale * action + defaultAngle
         action_scale = 0.5
@@ -96,46 +96,26 @@ class LeggedRobotCfg(BaseConfig):
 
     class domain_rand:
         randomize_friction = True
-        friction_range = [0.5, 1.25]
+        friction_range = [0.8, 1.5]
         randomize_base_mass = False
         added_mass_range = [-1., 1.]
-        push_robots = True
-        push_interval_s = 15
+        push_robots = False
+        push_interval_s = 10
         max_push_vel_xy = 1.
 
     class rewards:
-        class scales:
-            # termination = -0.0
-            # tracking_lin_vel = 1.5 #1.0
-            # tracking_ang_vel = 0.25 #0.5
-            # lin_vel_z = -2.0
-            # ang_vel_xy = -0.05
-            # orientation = -0.2 #-0.
-            # torques = -0.00001
-            # dof_vel = -0.
-            # dof_acc = -2.5e-7
-            # base_height = -10. #0.
-            # feet_air_time =  1.0
-            # collision = -1.
-            # feet_stumble = -0.0 
-            # action_rate = -0.01
-            # stand_still = -0.1 #-0.
-            
-            # probing motions training 
+        class scales:          
+            # crouch motions training 
             keep_feet_contact = 0.1
-            target_velocity = 2.0
-            target_position = 2.0
-            lin_vel_z = -2.0
-            ang_vel_xy = -0.05
-            orientation = -0.2
-            base_height = -10.0
-            collision = -1.0
-            torques = -0.00001
+            orientation = -5.0
+            base_height = 5.0
+            collision = -0.5
+            torques = -0.0001
             dof_acc = -2.5e-7
             action_rate = -0.01
-            dof_vel = -0.0001
+            dof_vel = -0.001
             torque_limits = -1.0
-            dis_feet_contact = -0.1
+            dis_feet_contact = -0.3
 
         only_positive_rewards = True # if true negative total rewards are clipped at zero (avoids early termination problems)
         tracking_sigma = 0.25 # tracking reward = exp(-error^2/sigma)
@@ -223,7 +203,7 @@ class LeggedRobotCfgPPO(BaseConfig):
         policy_class_name = 'ActorCritic'
         algorithm_class_name = 'PPO'
         num_steps_per_env = 24 # per iteration
-        max_iterations = 1500 # number of policy updates
+        max_iterations = 400 # number of policy updates
 
         # logging
         save_interval = 50 # check for potential saves every this many iterations
